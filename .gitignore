@@ -50,5 +50,5 @@ calibration/*.png
 # Excel Monitor (unrelated project)
 excelMonitor/
 
-# GUI test file (duplicate)
-main_gui.py
+# GUI test file (duplicate, root only)
+/main_gui.py

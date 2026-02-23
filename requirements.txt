@@ -1,0 +1,12 @@
+# Excel Monitor - 의존성 패키지
+
+# Windows COM Automation (Excel 제어)
+pywin32>=306
+
+# Excel 파일 처리 (필요 시)
+openpyxl>=3.1.5
+
+# EXE 빌드 도구
+pyinstaller>=6.0.0
+
+# Tkinter는 Python 기본 포함

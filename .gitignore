@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+/tmp/
+
+# Debug images
+debug_images/
+/home/pi/debug_images/
+
+# Claude Code
+.claude/
+
+# Test output
+calibration/*.jpg
+calibration/*.png
+
+# Excel Monitor (unrelated project)
+excelMonitor/
+
+# GUI test file (duplicate)
+main_gui.py

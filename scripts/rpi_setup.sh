@@ -47,7 +47,7 @@ echo "[3/7] 레포지토리 clone..."
 if [ -d "$PROJECT_DIR" ]; then
     echo "  이미 존재합니다: $PROJECT_DIR (건너뜀)"
 else
-    git clone "git@github.com:$GITHUB_REPO.git" "$PROJECT_DIR"
+    git clone "https://github.com/$GITHUB_REPO.git" "$PROJECT_DIR"
     echo "  clone 완료: $PROJECT_DIR"
 fi
 
@@ -55,13 +55,13 @@ fi
 echo ""
 echo "[4/7] Python 의존성 설치..."
 cd "$PROJECT_DIR"
-pip3 install -r edge_device/requirements_edge.txt
+pip3 install --break-system-packages -r edge_device/requirements_edge.txt
 echo "  의존성 설치 완료"
 
 # ── Step 5: systemd 서비스 등록 ──────────────────────────────────────────────
 echo ""
 echo "[5/7] systemd 서비스 등록..."
-sudo cp "$PROJECT_DIR/systemd/$SERVICE_NAME.service" "/etc/systemd/system/$SERVICE_NAME.service"
+sed "s|/home/pi/|$HOME/|g; s|User=pi|User=$(whoami)|g" "$PROJECT_DIR/systemd/$SERVICE_NAME.service" | sudo tee "/etc/systemd/system/$SERVICE_NAME.service" > /dev/null
 sudo systemctl daemon-reload
 sudo systemctl enable "$SERVICE_NAME.service"
 echo "  서비스 등록 및 자동 시작 설정 완료"
@@ -70,7 +70,7 @@ echo "  서비스 등록 및 자동 시작 설정 완료"
 echo ""
 echo "[6/7] sudo 권한 설정..."
 SUDOERS_FILE="/etc/sudoers.d/$SERVICE_NAME"
-echo "pi ALL=(ALL) NOPASSWD: /bin/systemctl restart $SERVICE_NAME.service" | sudo tee "$SUDOERS_FILE" > /dev/null
+echo "$(whoami) ALL=(ALL) NOPASSWD: /bin/systemctl restart $SERVICE_NAME.service" | sudo tee "$SUDOERS_FILE" > /dev/null
 sudo chmod 440 "$SUDOERS_FILE"
 echo "  sudo 권한 설정 완료"
 

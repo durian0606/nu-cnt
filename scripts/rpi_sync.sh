@@ -2,7 +2,7 @@
 # rpi_sync.sh - GitHub에서 최신 코드를 자동으로 pull하는 동기화 스크립트
 # crontab에서 1분마다 실행: * * * * * bash ~/nu-cnt/scripts/rpi_sync.sh >> ~/sync.log 2>&1
 
-PROJECT_DIR="/home/pi/nu-cnt"
+PROJECT_DIR="/home/durian0606/nu-cnt"
 BRANCH="master"
 LOG_PREFIX="[$(date '+%Y-%m-%d %H:%M:%S')]"
 

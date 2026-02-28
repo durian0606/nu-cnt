@@ -9,6 +9,9 @@ from datetime import datetime
 import threading
 import sys
 import os
+import base64
+import io
+import urllib.request
 
 # 모듈 경로 추가
 sys.path.insert(0, os.path.dirname(__file__))
@@ -57,6 +60,18 @@ class NurungjiCounterGUI:
         self.today_production_var = tk.StringVar(value="0")
         self.today_batches_var = tk.StringVar(value="0")
         self.connection_status_var = tk.StringVar(value="🔴 연결 안됨")
+
+        # 캘리브레이션 상태
+        self._calibration_window = None
+        self._calibration_image_label = None
+        self._calib_photo = None  # PhotoImage 참조 유지 (GC 방지)
+
+        # 카메라 뷰어 상태
+        self._camera_window = None
+        self._camera_image_label = None
+        self._camera_photo = None
+        self._camera_streaming = False
+        self._camera_status_var = None
 
         # UI 구성
         self._create_widgets()
@@ -205,6 +220,33 @@ class NurungjiCounterGUI:
         )
         log_btn.grid(row=0, column=3, padx=5)
 
+        # 두 번째 행: 캘리브레이션 버튼
+        self._calib_start_btn = ttk.Button(
+            button_frame,
+            text="🎯 캘리브레이션 시작",
+            command=self._start_calibration,
+            width=20
+        )
+        self._calib_start_btn.grid(row=1, column=0, columnspan=2, padx=5, pady=(8, 0))
+
+        self._calib_stop_btn = ttk.Button(
+            button_frame,
+            text="⏹ 중지",
+            command=self._stop_calibration,
+            width=20,
+            state=tk.DISABLED
+        )
+        self._calib_stop_btn.grid(row=1, column=2, columnspan=2, padx=5, pady=(8, 0))
+
+        # 세 번째 행: 카메라 뷰어 버튼
+        camera_btn = ttk.Button(
+            button_frame,
+            text="📷 카메라 보기",
+            command=self._open_camera_viewer,
+            width=20
+        )
+        camera_btn.grid(row=2, column=0, columnspan=4, padx=5, pady=(8, 0))
+
     def _create_log_section(self, parent):
         """
         로그 영역 생성
@@ -253,7 +295,8 @@ class NurungjiCounterGUI:
                 self.mqtt_receiver = MQTTReceiver(
                     on_count_update=self._on_count_update,
                     on_batch_complete=self._on_batch_complete,
-                    on_status_update=self._on_status_update
+                    on_status_update=self._on_status_update,
+                    on_calibration_image=self._on_calibration_image
                 )
 
                 broker = self.settings.get("mqtt.broker_address", "localhost")
@@ -460,20 +503,281 @@ class NurungjiCounterGUI:
         except Exception as e:
             messagebox.showerror("오류", f"로그 파일 열기 실패:\n{e}")
 
+    def _start_calibration(self):
+        """
+        캘리브레이션 시작: 이미지 창 열고 라즈베리파이에 명령 전송
+        """
+        if not self.mqtt_receiver or not self.mqtt_receiver.is_connected():
+            messagebox.showwarning("경고", "라즈베리파이가 연결되어 있지 않습니다.")
+            return
+
+        # 이미지 창 열기
+        self._open_calibration_window()
+
+        # 라즈베리파이에 캘리브레이션 시작 명령 전송
+        self.mqtt_receiver.publish_command("calibration_start")
+
+        # 버튼 상태 전환
+        self._calib_start_btn.config(state=tk.DISABLED)
+        self._calib_stop_btn.config(state=tk.NORMAL)
+        self._add_log("🎯 캘리브레이션 시작 - 라즈베리파이 영상 수신 대기 중...")
+
+    def _stop_calibration(self):
+        """
+        캘리브레이션 중지: 이미지 창 닫고 라즈베리파이에 명령 전송
+        """
+        if self.mqtt_receiver and self.mqtt_receiver.is_connected():
+            self.mqtt_receiver.publish_command("calibration_stop")
+
+        if self._calibration_window and self._calibration_window.winfo_exists():
+            self._calibration_window.destroy()
+        self._calibration_window = None
+
+        # 버튼 상태 복원
+        self._calib_start_btn.config(state=tk.NORMAL)
+        self._calib_stop_btn.config(state=tk.DISABLED)
+        self._add_log("⏹ 캘리브레이션 중지")
+
+    def _open_calibration_window(self):
+        """
+        캘리브레이션 이미지 표시 창 생성
+        """
+        if self._calibration_window and self._calibration_window.winfo_exists():
+            self._calibration_window.lift()
+            return
+
+        win = tk.Toplevel(self.root)
+        win.title("🎯 캘리브레이션 - 실시간 감지 영상")
+        win.geometry("660x400")
+
+        # 창 닫기 시 캘리브레이션 중지
+        win.protocol("WM_DELETE_WINDOW", self._stop_calibration)
+
+        # 이미지 표시 레이블
+        placeholder = ttk.Label(win, text="라즈베리파이 영상을 수신 중...\n(최대 3초 소요)", font=("맑은 고딕", 12))
+        placeholder.pack(expand=True)
+
+        self._calibration_image_label = placeholder
+        self._calibration_window = win
+
+    def _on_calibration_image(self, payload):
+        """
+        캘리브레이션 이미지 수신 콜백 (MQTT 스레드에서 호출)
+        """
+        self.root.after(0, self._update_calibration_image, payload)
+
+    def _update_calibration_image(self, payload):
+        """
+        캘리브레이션 창의 이미지 업데이트 (메인 스레드)
+        """
+        if not self._calibration_window or not self._calibration_window.winfo_exists():
+            return
+
+        try:
+            from PIL import Image, ImageTk
+
+            # base64 디코딩 → PIL Image
+            image_b64 = payload.get("image", "")
+            image_bytes = base64.b64decode(image_b64)
+            pil_image = Image.open(io.BytesIO(image_bytes))
+
+            # Tkinter PhotoImage 변환
+            photo = ImageTk.PhotoImage(pil_image)
+
+            # 레이블 갱신
+            self._calibration_image_label.config(image=photo, text="")
+            self._calib_photo = photo  # 참조 유지 (GC 방지)
+
+            # 창 제목에 카운트 표시
+            count = payload.get("count", 0)
+            self._calibration_window.title(f"🎯 캘리브레이션 - 감지: {count}개")
+
+        except ImportError:
+            self._calibration_image_label.config(
+                text="이미지 표시를 위해 Pillow 설치 필요\npip install pillow"
+            )
+        except Exception as e:
+            self._add_log(f"캘리브레이션 이미지 오류: {e}")
+
     def _show_settings(self):
         """
         설정 창 표시
         """
-        settings_window = tk.Toplevel(self.root)
-        settings_window.title("⚙️ 설정")
-        settings_window.geometry("400x300")
+        win = tk.Toplevel(self.root)
+        win.title("⚙️ 설정")
+        win.geometry("420x280")
+        win.resizable(False, False)
 
-        # TODO: 설정 UI 구현
-        ttk.Label(
-            settings_window,
-            text="설정 기능은 향후 추가 예정입니다.",
-            font=("맑은 고딕", 10)
-        ).pack(pady=50)
+        frame = ttk.Frame(win, padding=20)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        # --- 라즈베리 파이 ---
+        ttk.Label(frame, text="라즈베리 파이", font=("맑은 고딕", 10, "bold")).grid(
+            row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 4))
+
+        ttk.Label(frame, text="IP 주소:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        pi_ip_var = tk.StringVar(value=self.settings.get("raspberry_pi.ip", ""))
+        ttk.Entry(frame, textvariable=pi_ip_var, width=28).grid(row=1, column=1, sticky=tk.W, padx=(8, 0))
+
+        ttk.Label(frame, text="MJPEG 포트:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        pi_port_var = tk.StringVar(value=str(self.settings.get("raspberry_pi.mjpeg_port", 8080)))
+        ttk.Entry(frame, textvariable=pi_port_var, width=10).grid(row=2, column=1, sticky=tk.W, padx=(8, 0))
+
+        ttk.Separator(frame, orient=tk.HORIZONTAL).grid(
+            row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=12)
+
+        # --- MQTT ---
+        ttk.Label(frame, text="MQTT 브로커", font=("맑은 고딕", 10, "bold")).grid(
+            row=4, column=0, columnspan=2, sticky=tk.W, pady=(0, 4))
+
+        ttk.Label(frame, text="브로커 주소:").grid(row=5, column=0, sticky=tk.W, pady=2)
+        mqtt_addr_var = tk.StringVar(value=self.settings.get("mqtt.broker_address", "localhost"))
+        ttk.Entry(frame, textvariable=mqtt_addr_var, width=28).grid(row=5, column=1, sticky=tk.W, padx=(8, 0))
+
+        ttk.Label(frame, text="브로커 포트:").grid(row=6, column=0, sticky=tk.W, pady=2)
+        mqtt_port_var = tk.StringVar(value=str(self.settings.get("mqtt.broker_port", 1883)))
+        ttk.Entry(frame, textvariable=mqtt_port_var, width=10).grid(row=6, column=1, sticky=tk.W, padx=(8, 0))
+
+        # --- 저장 버튼 ---
+        def _save():
+            self.settings.set("raspberry_pi.ip", pi_ip_var.get().strip())
+            try:
+                self.settings.set("raspberry_pi.mjpeg_port", int(pi_port_var.get().strip()))
+            except ValueError:
+                pass
+            self.settings.set("mqtt.broker_address", mqtt_addr_var.get().strip())
+            try:
+                self.settings.set("mqtt.broker_port", int(mqtt_port_var.get().strip()))
+            except ValueError:
+                pass
+            self.settings.save()
+            self._add_log("설정 저장 완료")
+            win.destroy()
+
+        ttk.Button(frame, text="저장", command=_save, width=12).grid(
+            row=7, column=0, columnspan=2, pady=(16, 0))
+
+    def _open_camera_viewer(self):
+        """
+        카메라 뷰어 창 열기: 라즈베리 파이 MJPEG 스트림 실시간 표시
+        """
+        # 이미 창이 열려있으면 앞으로
+        if self._camera_window and self._camera_window.winfo_exists():
+            self._camera_window.lift()
+            return
+
+        ip = self.settings.get("raspberry_pi.ip", "").strip()
+        if not ip:
+            messagebox.showwarning(
+                "설정 필요",
+                "라즈베리 파이 IP 주소가 설정되지 않았습니다.\n⚙️ 설정 버튼에서 IP를 입력하고 저장하세요."
+            )
+            return
+
+        port = self.settings.get("raspberry_pi.mjpeg_port", 8080)
+
+        win = tk.Toplevel(self.root)
+        win.title(f"📷 카메라 뷰어 - {ip}:{port}")
+        win.geometry("680x530")
+        win.protocol("WM_DELETE_WINDOW", self._stop_camera_stream)
+
+        self._camera_status_var = tk.StringVar(value="연결 중...")
+
+        # 상태 레이블
+        status_lbl = ttk.Label(win, textvariable=self._camera_status_var, font=("맑은 고딕", 9))
+        status_lbl.pack(pady=(6, 0))
+
+        # 이미지 레이블
+        img_lbl = ttk.Label(win, text="연결 대기 중...", font=("맑은 고딕", 11))
+        img_lbl.pack(expand=True)
+
+        self._camera_image_label = img_lbl
+        self._camera_window = win
+
+        # 스트리밍 스레드 시작
+        self._camera_streaming = True
+        t = threading.Thread(
+            target=self._start_camera_stream,
+            args=(ip, port),
+            daemon=True
+        )
+        t.start()
+
+        self._add_log(f"📷 카메라 뷰어 시작 - {ip}:{port}")
+
+    def _start_camera_stream(self, ip, port):
+        """
+        MJPEG HTTP 스트림을 읽어 프레임별로 UI 업데이트 (백그라운드 스레드)
+        """
+        url = f"http://{ip}:{port}/stream"
+        try:
+            self.root.after(0, lambda: self._camera_status_var.set(f"연결 중... {url}"))
+            req = urllib.request.Request(url, headers={"User-Agent": "NurungjiViewer/1.0"})
+            response = urllib.request.urlopen(req, timeout=10)
+            self.root.after(0, lambda: self._camera_status_var.set(f"연결됨 - {url}"))
+
+            buffer = b""
+            while self._camera_streaming:
+                chunk = response.read(8192)
+                if not chunk:
+                    break
+                buffer += chunk
+
+                # JPEG 프레임 추출
+                start = buffer.find(b'\xff\xd8')
+                end = buffer.find(b'\xff\xd9')
+                if start != -1 and end != -1 and end > start:
+                    jpeg = buffer[start:end + 2]
+                    buffer = buffer[end + 2:]
+                    self.root.after(0, self._update_camera_frame, jpeg)
+
+                # 버퍼 과다 방지
+                if len(buffer) > 500_000:
+                    buffer = buffer[-100_000:]
+
+        except urllib.error.URLError as e:
+            msg = f"연결 실패: {e.reason}"
+            self.root.after(0, lambda: self._camera_status_var.set(msg))
+            self.root.after(0, lambda: self._add_log(f"📷 카메라 연결 실패: {e.reason}"))
+        except OSError as e:
+            if self._camera_streaming:
+                msg = f"스트림 오류: {e}"
+                self.root.after(0, lambda: self._camera_status_var.set(msg))
+                self.root.after(0, lambda: self._add_log(f"📷 스트림 오류: {e}"))
+        finally:
+            if self._camera_streaming:
+                self.root.after(0, lambda: self._camera_status_var.set("연결 끊김"))
+
+    def _update_camera_frame(self, jpeg_bytes):
+        """
+        카메라 뷰어 창의 이미지 업데이트 (메인 스레드)
+        """
+        if not self._camera_window or not self._camera_window.winfo_exists():
+            return
+        try:
+            from PIL import Image, ImageTk
+            pil_img = Image.open(io.BytesIO(jpeg_bytes))
+            # 창 크기에 맞게 축소 (최대 640×480)
+            pil_img.thumbnail((640, 480), Image.LANCZOS)
+            photo = ImageTk.PhotoImage(pil_img)
+            self._camera_image_label.config(image=photo, text="")
+            self._camera_photo = photo  # GC 방지
+        except ImportError:
+            self._camera_image_label.config(text="이미지 표시를 위해 Pillow 설치 필요\npip install pillow")
+        except Exception:
+            pass
+
+    def _stop_camera_stream(self):
+        """
+        카메라 스트림 중지 및 창 닫기
+        """
+        self._camera_streaming = False
+        if self._camera_window and self._camera_window.winfo_exists():
+            self._camera_window.destroy()
+        self._camera_window = None
+        self._camera_image_label = None
+        self._camera_photo = None
+        self._add_log("📷 카메라 뷰어 종료")
 
     def _update_gui(self):
         """

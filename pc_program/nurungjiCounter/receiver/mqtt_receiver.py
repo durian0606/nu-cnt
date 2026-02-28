@@ -5,6 +5,7 @@
 
 import paho.mqtt.client as mqtt
 import json
+import time
 import threading
 from ..config import MQTT_BROKER_ADDRESS, MQTT_BROKER_PORT, MQTT_TOPICS, DEBUG_MODE
 
@@ -14,7 +15,7 @@ class MQTTReceiver:
     MQTT 메시지 수신 클래스
     """
 
-    def __init__(self, on_count_update=None, on_batch_complete=None, on_status_update=None):
+    def __init__(self, on_count_update=None, on_batch_complete=None, on_status_update=None, on_calibration_image=None):
         """
         MQTT 수신기 초기화
 
@@ -22,6 +23,7 @@ class MQTTReceiver:
             on_count_update (callable): 카운트 업데이트 콜백 (count, boxes)
             on_batch_complete (callable): 팬 확정 콜백 (final_count)
             on_status_update (callable): 상태 업데이트 콜백 (status_data)
+            on_calibration_image (callable): 캘리브레이션 이미지 수신 콜백 (payload)
         """
         self.client = None
         self.connected = False
@@ -31,6 +33,7 @@ class MQTTReceiver:
         self.on_count_update = on_count_update
         self.on_batch_complete = on_batch_complete
         self.on_status_update = on_status_update
+        self.on_calibration_image = on_calibration_image
 
         # 통계
         self.messages_received = 0
@@ -130,6 +133,9 @@ class MQTTReceiver:
             elif msg.topic == MQTT_TOPICS["status"]:
                 self._handle_status_update(payload)
 
+            elif msg.topic == MQTT_TOPICS.get("calibration_image"):
+                self._handle_calibration_image(payload)
+
         except json.JSONDecodeError as e:
             print(f"[MQTT Receiver] JSON 파싱 오류: {e}")
 
@@ -182,6 +188,51 @@ class MQTTReceiver:
         # 콜백 호출
         if self.on_status_update:
             self.on_status_update(payload)
+
+    def _handle_calibration_image(self, payload):
+        """
+        캘리브레이션 이미지 수신 처리
+
+        Args:
+            payload (dict): {"timestamp": ..., "count": ..., "image": base64_string}
+        """
+        if DEBUG_MODE:
+            print(f"[MQTT Receiver] 캘리브레이션 이미지 수신: {payload.get('count')}개")
+
+        if self.on_calibration_image:
+            self.on_calibration_image(payload)
+
+    def publish_command(self, action):
+        """
+        라즈베리파이에 명령 전송
+
+        Args:
+            action (str): "calibration_start" | "calibration_stop"
+
+        Returns:
+            bool: 전송 성공 여부
+        """
+        if not self.connected:
+            print("[MQTT Receiver] 오류: 브로커에 연결되지 않음")
+            return False
+
+        try:
+            payload = {
+                "timestamp": time.time(),
+                "action": action
+            }
+            result = self.client.publish(
+                topic="nurungji/command",
+                payload=json.dumps(payload),
+                qos=1
+            )
+            if DEBUG_MODE:
+                print(f"[MQTT Receiver] 명령 전송: {action}")
+            return result.rc == mqtt.MQTT_ERR_SUCCESS
+
+        except Exception as e:
+            print(f"[MQTT Receiver] 명령 전송 오류: {e}")
+            return False
 
     def is_connected(self):
         """

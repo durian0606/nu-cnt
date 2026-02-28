@@ -10,7 +10,8 @@ MQTT_BROKER_PORT = 1883
 MQTT_TOPICS = {
     "count": "nurungji/count",
     "batch_complete": "nurungji/batch_complete",
-    "status": "nurungji/status"
+    "status": "nurungji/status",
+    "calibration_image": "nurungji/calibration/image"  # 캘리브레이션 이미지 수신
 }
 
 # ============================================

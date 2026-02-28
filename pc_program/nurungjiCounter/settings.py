@@ -35,6 +35,10 @@ class Settings:
                 "broker_address": "localhost",
                 "broker_port": 1883
             },
+            "raspberry_pi": {
+                "ip": "",
+                "mjpeg_port": 8080
+            },
             "counter": {
                 "auto_confirm": True,
                 "stabilization_window": 5

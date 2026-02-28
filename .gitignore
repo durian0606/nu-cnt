@@ -46,6 +46,7 @@ debug_images/
 # Test output
 calibration/*.jpg
 calibration/*.png
+camera_test.jpg
 
 # Excel Monitor (unrelated project)
 excelMonitor/

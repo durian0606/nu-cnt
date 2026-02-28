@@ -6,6 +6,9 @@
 import paho.mqtt.client as mqtt
 import json
 import time
+import base64
+import cv2
+import numpy as np
 from config import (
     MQTT_BROKER_ADDRESS,
     MQTT_BROKER_PORT,
@@ -23,6 +26,7 @@ class MQTTClient:
         """MQTT 클라이언트 초기화"""
         self.client = None
         self.connected = False
+        self._command_handler = None
         self._initialize_client()
 
     def _initialize_client(self):
@@ -35,6 +39,7 @@ class MQTTClient:
             self.client.on_connect = self._on_connect
             self.client.on_disconnect = self._on_disconnect
             self.client.on_publish = self._on_publish
+            self.client.on_message = self._on_message
 
             # 브로커 연결
             if DEBUG_MODE:
@@ -58,8 +63,11 @@ class MQTTClient:
         """
         if rc == 0:
             self.connected = True
+            # PC로부터 명령 수신을 위해 command 토픽 구독
+            client.subscribe(MQTT_TOPICS["command"])
             if DEBUG_MODE:
                 print(f"[MQTT] ✓ 브로커 연결 성공")
+                print(f"[MQTT] 명령 수신 구독: {MQTT_TOPICS['command']}")
         else:
             self.connected = False
             print(f"[MQTT] ✗ 연결 실패 - 코드: {rc}")
@@ -80,6 +88,29 @@ class MQTTClient:
         """
         if DEBUG_MODE:
             print(f"[MQTT] 메시지 전송 완료 - ID: {mid}")
+
+    def _on_message(self, client, userdata, msg):
+        """
+        메시지 수신 콜백 (PC로부터 명령 수신)
+        """
+        try:
+            if msg.topic == MQTT_TOPICS["command"]:
+                payload = json.loads(msg.payload.decode('utf-8'))
+                if DEBUG_MODE:
+                    print(f"[MQTT] 명령 수신: {payload}")
+                if self._command_handler:
+                    self._command_handler(payload)
+        except Exception as e:
+            print(f"[MQTT] 명령 수신 오류: {e}")
+
+    def set_command_handler(self, callback):
+        """
+        PC 명령 수신 핸들러 등록
+
+        Args:
+            callback (callable): 명령 수신 시 호출할 함수 (payload dict 인자)
+        """
+        self._command_handler = callback
 
     def publish_count(self, count, bounding_boxes):
         """
@@ -192,6 +223,66 @@ class MQTTClient:
 
         except Exception as e:
             print(f"[MQTT] 오류: 상태 전송 실패 - {e}")
+            return False
+
+    def publish_calibration_image(self, frame, count, boxes):
+        """
+        캘리브레이션용 감지 결과 이미지 전송 (PC에서 실시간 확인용)
+
+        Args:
+            frame: 카메라 프레임 (numpy array, RGB)
+            count (int): 감지된 개수
+            boxes (list): 바운딩 박스 리스트
+
+        Returns:
+            bool: 전송 성공 여부
+        """
+        if not self.connected:
+            return False
+
+        try:
+            # BGR로 변환 후 640x360으로 리사이즈 (전송 크기 최적화)
+            vis_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            vis_frame = cv2.resize(vis_frame, (640, 360))
+
+            # 바운딩 박스 그리기 (리사이즈 비율 적용)
+            orig_h, orig_w = frame.shape[:2]
+            scale_x = 640 / orig_w
+            scale_y = 360 / orig_h
+            for box in boxes:
+                x = int(box['x'] * scale_x)
+                y = int(box['y'] * scale_y)
+                w = int(box['w'] * scale_x)
+                h = int(box['h'] * scale_y)
+                cv2.rectangle(vis_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+            # 개수 텍스트 오버레이
+            cv2.putText(vis_frame, f"Count: {count}", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
+            # JPEG 압축 후 base64 인코딩
+            _, buffer = cv2.imencode('.jpg', vis_frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
+            image_b64 = base64.b64encode(buffer).decode('utf-8')
+
+            payload = {
+                "timestamp": time.time(),
+                "count": count,
+                "image": image_b64
+            }
+
+            result = self.client.publish(
+                topic=MQTT_TOPICS["calibration_image"],
+                payload=json.dumps(payload),
+                qos=0
+            )
+
+            if DEBUG_MODE:
+                print(f"[MQTT] 캘리브레이션 이미지 전송: {count}개, {len(image_b64)} bytes")
+
+            return result.rc == mqtt.MQTT_ERR_SUCCESS
+
+        except Exception as e:
+            print(f"[MQTT] 오류: 캘리브레이션 이미지 전송 실패 - {e}")
             return False
 
     def is_connected(self):

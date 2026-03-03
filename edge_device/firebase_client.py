@@ -49,6 +49,17 @@ def _firebase_patch(path, data):
         return None
 
 
+def get_device_power():
+    """
+    Firebase devicePower 상태 조회
+
+    Returns:
+        str | None: "on" | "off", 없으면 None
+    """
+    data = _firebase_get("devicePower")
+    return data if isinstance(data, str) else None
+
+
 def get_active_product():
     """
     Firebase에서 현재 생산 중인 제품명 조회

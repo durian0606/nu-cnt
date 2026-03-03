@@ -17,6 +17,9 @@ from config import CAPTURE_INTERVAL, DEBUG_MODE, POWER_SAVE_MODE
 # Firebase activeProduction 조회 간격 (초)
 ACTIVE_PRODUCT_POLL_INTERVAL = 5
 
+# 팬 완료 확정에 필요한 연속 0 프레임 수 (CAPTURE_INTERVAL=1초 기준 → 10초)
+BATCH_CONFIRM_FRAMES = 10
+
 
 class NurungjiCounterEdge:
     """
@@ -50,8 +53,9 @@ class NurungjiCounterEdge:
         else:
             print("\n✓ 모든 시스템 준비 완료")
 
-        # 팬 완료 감지용 이전 카운트
-        self._previous_count = 0
+        # 팬 완료 감지용 상태
+        self._last_nonzero_count = 0   # 마지막으로 감지된 0이 아닌 카운트
+        self._zero_streak = 0          # 연속 0 프레임 수
 
         # Firebase activeProduction 캐시
         self._active_product = None
@@ -151,7 +155,8 @@ class NurungjiCounterEdge:
 
     def _check_batch_complete(self, current_count):
         """
-        팬 완료 감지: 이전 카운트 > 0 이고 현재 카운트 == 0 이면 팬 1판 완료
+        팬 완료 감지: BATCH_CONFIRM_FRAMES(10초) 연속으로 0이 되면 팬 1판 완료.
+        일시적인 오감지(빛 변화, 손 가림 등)를 무시하기 위해 연속 확인.
 
         Args:
             current_count (int): 현재 프레임의 감지 갯수
@@ -159,12 +164,29 @@ class NurungjiCounterEdge:
         Returns:
             int: 완료된 팬의 갯수 (0이면 완료 없음)
         """
-        batch_count = 0
-        if self._previous_count > 0 and current_count == 0:
-            batch_count = self._previous_count
-            print(f"\n🍚 팬 완료! 갯수: {batch_count}개")
-        self._previous_count = current_count
-        return batch_count
+        if current_count > 0:
+            # 누룽지 감지 중 → 마지막 카운트 갱신, streak 리셋
+            self._last_nonzero_count = current_count
+            self._zero_streak = 0
+            return 0
+
+        # current_count == 0
+        if self._last_nonzero_count == 0:
+            return 0  # 처음부터 0이었던 경우 (팬이 없음)
+
+        self._zero_streak += 1
+
+        if self._zero_streak == BATCH_CONFIRM_FRAMES:
+            batch_count = self._last_nonzero_count
+            print(f"\n🍚 팬 완료! 갯수: {batch_count}개 ({BATCH_CONFIRM_FRAMES}초 연속 확인)")
+            self._last_nonzero_count = 0
+            self._zero_streak = 0
+            return batch_count
+
+        if DEBUG_MODE and self._zero_streak > 1:
+            print(f"[감지] 0 연속 {self._zero_streak}/{BATCH_CONFIRM_FRAMES}프레임 대기 중...")
+
+        return 0
 
     def run(self):
         """

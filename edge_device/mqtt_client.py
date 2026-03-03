@@ -52,7 +52,7 @@ class MQTTClient:
 
         except Exception as e:
             print(f"[MQTT] 오류: 클라이언트 초기화 실패 - {e}")
-            raise
+            self.connected = False
 
     def _on_connect(self, client, userdata, flags, rc):
         """

@@ -6,6 +6,7 @@ Firebase REST API 클라이언트 (urllib 내장 라이브러리 사용)
 import urllib.request
 import urllib.error
 import json
+import socket
 from config import FIREBASE_DATABASE_URL, DEBUG_MODE
 
 
@@ -133,6 +134,10 @@ def push_device_status(count, cpu_temp, frames_total):
     if cpu_temp is not None:
         data["cpuTemp"] = cpu_temp
 
+    ip = _get_local_ip()
+    if ip:
+        data["ipAddress"] = ip
+
     result = _firebase_patch("edgeDevice", data)
     if DEBUG_MODE:
         if result is not None:
@@ -211,6 +216,18 @@ def poll_command(callback):
         print(f"[Firebase] 명령 처리 완료: action={action}")
 
     return True
+
+
+def _get_local_ip():
+    """로컬 IP 주소 조회 (웹앱 카메라 스트리밍 URL 제공용)"""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return None
 
 
 def _now_ms():

@@ -7,7 +7,7 @@ sync test: 2026-02-26
 # ============================================
 # MQTT 브로커 설정
 # ============================================
-MQTT_BROKER_ADDRESS = "192.168.0.67"  # NAS IP (MQTT 브로커)
+MQTT_BROKER_ADDRESS = ""  # 공장 설치: MQTT 미사용 (Firebase 모드)
 MQTT_BROKER_PORT = 1883
 MQTT_TOPICS = {
     "count": "nurungji/count",                # 실시간 카운트
@@ -57,6 +57,6 @@ FIREBASE_DATABASE_URL = "https://zego-87d69-default-rtdb.asia-southeast1.firebas
 # ============================================
 # 디버그 설정
 # ============================================
-DEBUG_MODE = True           # 디버그 출력 활성화
+DEBUG_MODE = False          # 디버그 출력 비활성화 (프로덕션)
 SAVE_DEBUG_IMAGES = False   # 감지된 이미지 저장 (SD카드 용량 주의)
 DEBUG_IMAGE_PATH = "/home/pi/debug_images/"

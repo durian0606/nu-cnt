@@ -15,7 +15,7 @@ import firebase_client
 from config import CAPTURE_INTERVAL, DEBUG_MODE, POWER_SAVE_MODE
 
 # Firebase activeProduction 조회 간격 (초)
-ACTIVE_PRODUCT_POLL_INTERVAL = 30
+ACTIVE_PRODUCT_POLL_INTERVAL = 5
 
 
 class NurungjiCounterEdge:
@@ -59,6 +59,8 @@ class NurungjiCounterEdge:
 
         # 장치 상태 주기적 업데이트 (30초마다)
         self._last_status_push = 0
+        # Firebase currentCount 빠른 업데이트 (3초마다)
+        self._last_count_push = 0
         # Firebase deviceSettings 주기적 갱신 (5분마다)
         self._last_settings_refresh = 0
         # 누적 프레임 수
@@ -116,6 +118,16 @@ class NurungjiCounterEdge:
         elif action == "calibration_stop":
             self._calibration_mode = False
             print("[캘리브레이션] 중지")
+
+        elif action == "start_production":
+            # zego "생산 시작" 버튼 → activeProduct 즉시 재조회 (poll 대기 없음)
+            self._last_product_poll = 0
+            print("[명령] 생산 시작 신호 수신 - activeProduct 즉시 갱신")
+
+        elif action == "stop_production":
+            # zego "생산 종료" 버튼 → 즉시 tracking 중지
+            self._active_product = None
+            print("[명령] 생산 종료 신호 수신")
 
         else:
             print(f"[명령] 알 수 없는 명령: {action}")
@@ -219,7 +231,10 @@ class NurungjiCounterEdge:
                 # 5. Firebase activeProduct 주기적 갱신 (팬 완료와 무관하게)
                 self._refresh_active_product()
 
-                # 6. Firebase에 장치 상태 주기적 업데이트 (30초마다)
+                # 6. Firebase currentCount 빠른 업데이트 (3초마다)
+                self._push_count_if_needed(count)
+
+                # Firebase에 장치 상태 주기적 업데이트 (30초마다)
                 self._push_status_if_needed(count)
 
                 # 7. Firebase deviceSettings 주기적 갱신 (5분마다)
@@ -285,6 +300,13 @@ class NurungjiCounterEdge:
         status["battery_level"] = 100
 
         return status
+
+    def _push_count_if_needed(self, current_count):
+        """3초마다 Firebase에 현재 갯수만 빠르게 업데이트"""
+        now = time.time()
+        if now - self._last_count_push >= 3:
+            firebase_client.push_current_count(current_count)
+            self._last_count_push = now
 
     def _push_status_if_needed(self, current_count):
         """30초마다 Firebase에 장치 상태 업데이트"""

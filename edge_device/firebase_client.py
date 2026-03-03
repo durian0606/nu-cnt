@@ -93,6 +93,17 @@ def increment_production(product_name, count):
     return False
 
 
+def push_current_count(count):
+    """
+    Firebase edgeDevice/currentCount 를 빠르게 업데이트 (3초마다 호출)
+    CPU 온도 조회 없이 count + lastSeen 만 가볍게 PATCH
+
+    Args:
+        count (int): 현재 감지 중인 갯수
+    """
+    _firebase_patch("edgeDevice", {"currentCount": count, "lastSeen": _now_ms()})
+
+
 def push_device_status(count, cpu_temp, frames_total):
     """
     Firebase edgeDevice/ 에 장치 상태 업데이트 (30초마다 호출)
@@ -180,7 +191,7 @@ def poll_command(callback):
     _firebase_patch("deviceCommands", {"processed": True})
 
     try:
-        callback(action)
+        callback({"action": action})
     except Exception as e:
         if DEBUG_MODE:
             print(f"[Firebase] 명령 처리 오류 ({action}): {e}")

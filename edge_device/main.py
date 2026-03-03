@@ -123,6 +123,11 @@ class NurungjiCounterEdge:
             self._calibration_mode = False
             print("[캘리브레이션] 중지")
 
+        elif action == "refresh_settings":
+            # zego "저장" 버튼 → deviceSettings 즉시 재조회 (5분 대기 없음)
+            self._last_settings_refresh = 0
+            print("[명령] 설정 갱신 신호 수신 - deviceSettings 즉시 적용")
+
         elif action == "start_production":
             # zego "생산 시작" 버튼 → activeProduct 즉시 재조회 (poll 대기 없음)
             self._last_product_poll = 0

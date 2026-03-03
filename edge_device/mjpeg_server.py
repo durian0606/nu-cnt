@@ -210,8 +210,7 @@ class MJPEGServer:
         """
         if frame is None:
             return
-        overlay = self._get_calibration_mode()
-        jpeg = encode_frame(frame, boxes or [], overlay)
+        jpeg = encode_frame(frame, boxes or [], show_overlay=True)
         if jpeg:
             frame_buffer.update(jpeg)
 
